@@ -30,15 +30,18 @@ internal class Client(
         }
     }
 
-    suspend fun claim(code: String, appUserId: String, codeType: CodeType): ClaimResult {
-        val body = requestBody(code, appUserId, codeType)
+    suspend fun claim(code: String?, appUserId: String, codeType: CodeType, clickId: String? = null): ClaimResult {
+        val body = requestBody(code, clickId, appUserId, codeType)
         val response = transport.post("$baseUrl/api/pub/v1/mobile/$programId/claims", body)
         return result(response)
     }
 
     suspend fun claimQuery(query: String?, appUserId: String): ClaimResult? {
-        val code = code(query) ?: return null
-        return claim(code, appUserId, CodeType.AUTO)
+        val code = code(query)
+        val clickId = clickId(query)
+        if (code == null && clickId == null) return null
+
+        return claim(code, appUserId, CodeType.AUTO, clickId)
     }
 
     suspend fun claimFromInstallReferrer(appUserId: String): ClaimResult? {
@@ -50,18 +53,20 @@ internal class Client(
                 return@withLock null
             }
 
-            val code = when (val referrer = installReferrer.read()) {
+            val referrer = when (val found = installReferrer.read()) {
                 InstallReferrer.Unavailable -> return@withLock null
                 InstallReferrer.None -> null
-                is InstallReferrer.Found -> code(referrer.referrer)
+                is InstallReferrer.Found -> found.referrer
             }
-            if (code == null) {
+            val code = code(referrer)
+            val clickId = clickId(referrer)
+            if (code == null && clickId == null) {
                 markInstallReferrerClaimed()
                 return@withLock null
             }
 
             val result = try {
-                claim(code, appUserId, CodeType.AUTO)
+                claim(code, appUserId, CodeType.AUTO, clickId)
             } catch (e: PartneroException) {
                 if (!e.isRetryable) markInstallReferrerClaimed()
                 throw e
@@ -71,16 +76,26 @@ internal class Client(
         }
     }
 
-    /** The value of [referralParameter] in a URL query or install referrer, matched case-insensitively. */
+    /**
+     * `partnero_code` from a Partnero app link, otherwise the value of [referralParameter], in a URL query or
+     * install referrer. Names are matched case-insensitively.
+     */
     fun code(query: String?): String? {
         if (referralParameter.isBlank()) {
             throw PartneroException.InvalidInput(PartneroException.Field.REFERRAL_PARAMETER)
         }
+
+        return queryValue(query, CODE_PARAMETER) ?: queryValue(query, referralParameter)
+    }
+
+    /** `partnero_click` from a Partnero app link. A malformed click ID is ignored, since the code alone still claims. */
+    fun clickId(query: String?): String? = queryValue(query, CLICK_ID_PARAMETER)?.takeIf(::isValidClickId)
+
+    private fun queryValue(query: String?, name: String): String? {
         if (query.isNullOrEmpty()) return null
 
         return query.split('&').firstNotNullOfOrNull { pair ->
-            val name = decode(pair.substringBefore('='))
-            if (pair.contains('=') && name.equals(referralParameter, ignoreCase = true)) {
+            if (pair.contains('=') && decode(pair.substringBefore('=')).equals(name, ignoreCase = true)) {
                 decode(pair.substringAfter('=')).trim().ifEmpty { null }
             } else {
                 null
@@ -88,21 +103,30 @@ internal class Client(
         }
     }
 
-    private fun requestBody(code: String, appUserId: String, codeType: CodeType): String {
-        val code = code.trim()
+    private fun requestBody(code: String?, clickId: String?, appUserId: String, codeType: CodeType): String {
+        val code = code?.trim()?.ifEmpty { null }
+        val clickId = clickId?.trim()?.ifEmpty { null }
         val appUserId = appUserId.trim()
 
         requireValidProgramId()
-        if (code.isEmpty() || code.length > MAX_CODE_LENGTH || !code.all(::isIdentifierCharacter)) {
+        if (code != null && (code.length > MAX_CODE_LENGTH || !code.all(::isIdentifierCharacter))) {
+            throw PartneroException.InvalidInput(PartneroException.Field.CODE)
+        }
+        if (clickId != null && !isValidClickId(clickId)) {
+            throw PartneroException.InvalidInput(PartneroException.Field.CLICK_ID)
+        }
+        if (code == null && clickId == null) {
             throw PartneroException.InvalidInput(PartneroException.Field.CODE)
         }
         requireValidAppUserId(appUserId)
 
         val body = JSONObject()
             .put("app_user_id", appUserId)
-            .put("code", code)
-            .put("code_type", codeType.value)
             .put("platform", PLATFORM)
+        if (code != null) {
+            body.put("code", code).put("code_type", codeType.value)
+        }
+        clickId?.let { body.put("click_id", it) }
         storage.getString(FIRST_SEEN_AT_KEY)?.let { body.put("first_seen_at", it) }
 
         return body.toString()
@@ -177,7 +201,16 @@ internal class Client(
 
         /** Mirrors the claim endpoint's validation, so bad input fails without a request. */
         const val MAX_CODE_LENGTH = 100
+        const val MAX_CLICK_ID_LENGTH = 32
         const val MAX_APP_USER_ID_LENGTH = 255
+
+        /** Set by Partnero app links on deep links and on the Google Play install referrer. */
+        const val CODE_PARAMETER = "partnero_code"
+        const val CLICK_ID_PARAMETER = "partnero_click"
+
+        fun isValidClickId(value: String): Boolean =
+            value.isNotEmpty() && value.length <= MAX_CLICK_ID_LENGTH &&
+                value.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
 
         fun isIdentifierCharacter(character: Char): Boolean =
             character in 'a'..'z' || character in 'A'..'Z' || character in '0'..'9' ||

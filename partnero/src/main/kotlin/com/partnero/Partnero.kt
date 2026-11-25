@@ -26,7 +26,8 @@ public object Partnero {
      *
      * @param programId The program's Program ID, shown on its Integration page in Partnero.
      * @param baseUrl Overrides `https://app.partnero.com`, for example for staging.
-     * @param referralParameter The query parameter that holds the code in your referral links, such as `aff`.
+     * @param referralParameter The query parameter that holds the code in your own referral links. Partnero app
+     *   links are read either way.
      */
     @JvmStatic
     @JvmOverloads
@@ -34,7 +35,7 @@ public object Partnero {
         context: Context,
         programId: String,
         baseUrl: String = DEFAULT_BASE_URL,
-        referralParameter: String = "ref",
+        referralParameter: String = "aff",
     ) {
         val appContext = context.applicationContext ?: context
         client = Client(
@@ -54,19 +55,35 @@ public object Partnero {
      * Use the same ID your purchases are reported under, such as `Purchases.sharedInstance.appUserID`
      * once the user is identified. Anonymous RevenueCat IDs are rejected, because they change on reinstall.
      *
+     * Pass [clickId] when the code came from a Partnero app link, so the customer is tied to the partner's click.
+     * The click is ignored if it belongs to a different partner than the code.
+     *
      * @throws PartneroException when Partnero refuses the claim or the input is not valid.
      * @throws java.io.IOException when Partnero could not be reached.
      */
-    public suspend fun claim(code: String, appUserId: String, codeType: CodeType = CodeType.AUTO): ClaimResult =
-        requireClient().claim(code, appUserId, codeType)
+    public suspend fun claim(
+        code: String,
+        appUserId: String,
+        codeType: CodeType = CodeType.AUTO,
+        clickId: String? = null,
+    ): ClaimResult = requireClient().claim(code, appUserId, codeType, clickId)
 
-    /** Claims the code in a referral or deep link. Returns `null` when the link has no code. */
+    /**
+     * Attributes [appUserId] to the partner whose app link was clicked, using the click ID alone.
+     *
+     * @throws PartneroException when Partnero refuses the claim or the input is not valid.
+     * @throws java.io.IOException when Partnero could not be reached.
+     */
+    public suspend fun claimClick(clickId: String, appUserId: String): ClaimResult =
+        requireClient().claim(null, appUserId, CodeType.AUTO, clickId)
+
+    /** Claims the code and click ID in a referral or deep link. Returns `null` when the link has neither. */
     public suspend fun claim(uri: Uri, appUserId: String): ClaimResult? =
         requireClient().claimQuery(uri.encodedQuery, appUserId)
 
     /**
-     * Claims the code from the Google Play install referrer, for users who installed through a partner's
-     * Play Store link. Runs once per install; later calls return `null` without a request.
+     * Claims the code and click ID from the Google Play install referrer, for users who installed through a
+     * partner's app link or Play Store link. Runs once per install; later calls return `null` without a request.
      *
      * Call it after sign-in, once [appUserId] is known. A rate limit, server error or network failure
      * leaves it to try again on the next call. Any other refusal, such as an unknown code, is final.
@@ -77,6 +94,10 @@ public object Partnero {
     /** The code in a referral or deep link, or `null` when it has none. */
     @JvmStatic
     public fun code(uri: Uri): String? = requireClient().code(uri.encodedQuery)
+
+    /** The click ID in a Partnero app link, or `null` when it has none. */
+    @JvmStatic
+    public fun clickId(uri: Uri): String? = requireClient().clickId(uri.encodedQuery)
 
     /**
      * Subscriber attributes for RevenueCat, so a purchase is still attributed if the claim never reached Partnero.

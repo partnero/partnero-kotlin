@@ -28,6 +28,7 @@ public sealed class PartneroException(message: String) : Exception(message) {
         PROGRAM_ID("Program ID", null),
         REFERRAL_PARAMETER("referral parameter", null),
         CODE("referral code", "code"),
+        CLICK_ID("click ID", "click_id"),
         APP_USER_ID("app user ID", "app_user_id"),
         CODE_TYPE("code type", "code_type"),
         FIRST_SEEN_AT("first launch date", "first_seen_at"),

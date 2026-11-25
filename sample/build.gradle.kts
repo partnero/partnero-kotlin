@@ -18,7 +18,7 @@ android {
 
         buildConfigField("String", "PARTNERO_PROGRAM_ID", stringProperty("partnero.programId", "YOUR_PROGRAM_ID"))
         buildConfigField("String", "PARTNERO_BASE_URL", stringProperty("partnero.baseUrl", "https://app.partnero.com"))
-        buildConfigField("String", "PARTNERO_REFERRAL_PARAMETER", stringProperty("partnero.referralParameter", "ref"))
+        buildConfigField("String", "PARTNERO_REFERRAL_PARAMETER", stringProperty("partnero.referralParameter", "aff"))
     }
 
     buildFeatures {

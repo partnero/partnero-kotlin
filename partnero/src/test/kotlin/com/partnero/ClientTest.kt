@@ -177,6 +177,72 @@ class ClientTest {
     }
 
     @Test
+    fun `sends the click ID with the code`() = runTest {
+        transport.respond(200, claimed("user_42"))
+
+        client().claim("PARTNER1", "user_42", CodeType.AUTO, " a1B2c3 ")
+
+        val body = JSONObject(transport.body!!)
+        assertEquals("PARTNER1", body.getString("code"))
+        assertEquals("a1B2c3", body.getString("click_id"))
+    }
+
+    @Test
+    fun `claims by click ID alone`() = runTest {
+        transport.respond(200, claimed("user_42"))
+
+        client().claim(null, "user_42", CodeType.AUTO, "a1B2c3")
+
+        val body = JSONObject(transport.body!!)
+        assertEquals("a1B2c3", body.getString("click_id"))
+        assertTrue(!body.has("code") && !body.has("code_type"))
+        assertEquals(4, body.length())
+    }
+
+    @Test
+    fun `rejects a malformed click ID without a request`() = runTest {
+        for (clickId in listOf("a1-b2", "a1 b2", "a".repeat(33))) {
+            val error = expect<PartneroException.InvalidInput> { client().claim(null, "user_42", CodeType.AUTO, clickId) }
+            assertEquals(PartneroException.Field.CLICK_ID, error.field)
+        }
+        assertEquals(PartneroException.Field.CODE, expect<PartneroException.InvalidInput> { client().claim(null, "user_42", CodeType.AUTO) }.field)
+        assertEquals(0, transport.calls)
+    }
+
+    @Test
+    fun `reads a Partnero app link`() {
+        val client = client()
+
+        assertEquals("PARTNER1", client.code("partnero_code=PARTNER1&partnero_click=a1B2c3&ref=OTHER"))
+        assertEquals("a1B2c3", client.clickId("partnero_code=PARTNER1&partnero_click=a1B2c3"))
+        assertNull(client.clickId("partnero_click=not-valid"))
+        assertNull(client.clickId("ref=PARTNER1"))
+    }
+
+    @Test
+    fun `claims a link with only a click`() = runTest {
+        transport.respond(200, claimed("user_42"))
+
+        assertEquals(ClaimResult.Status.CLAIMED, client().claimQuery("partnero_click=a1B2c3", "user_42")?.status)
+
+        val body = JSONObject(transport.body!!)
+        assertEquals("a1B2c3", body.getString("click_id"))
+        assertTrue(!body.has("code"))
+    }
+
+    @Test
+    fun `claims an app link install referrer with its click`() = runTest {
+        transport.respond(200, claimed("user_42"))
+        referrer = InstallReferrer.Found("partnero_code=PARTNER1&partnero_click=a1B2c3")
+
+        assertEquals(ClaimResult.Status.CLAIMED, client().claimFromInstallReferrer("user_42")?.status)
+
+        val body = JSONObject(transport.body!!)
+        assertEquals("PARTNER1", body.getString("code"))
+        assertEquals("a1B2c3", body.getString("click_id"))
+    }
+
+    @Test
     fun `claims the install referrer once`() = runTest {
         transport.respond(200, claimed("user_42"))
         val client = client()
